@@ -1,0 +1,16 @@
+# Fichiers système macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Streamlit : secrets et configuration locale
+.streamlit/secrets.toml
+
+# Fichiers temporaires et journaux
+*.log
+*.tmp
