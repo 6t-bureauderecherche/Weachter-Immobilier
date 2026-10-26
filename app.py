@@ -235,8 +235,8 @@ def render_dashboard() -> None:
         # st.markdown("---")
         st.image(LOGO_PATH, width=240, alt="Logo 6t")
         st.markdown(
-            "Cette carte présente les indicateurs territoriaux des mailles du canton "
-            "de Genève. Cliquez sur une maille pour consulter ses résultats ; zoomez "
+            "Cette carte présente les indicateurs territoriaux sur des mailles de 25 mètres par 25 mètres."
+            "Cliquez sur une maille pour consulter ses résultats ; zoomez "
             "pour voir davantage de mailles."
         )
         st.markdown("---")
@@ -295,7 +295,7 @@ def render_dashboard() -> None:
                 performance = selected.get("Typo_SUM")
                 st.metric(
                     "Performance globale",
-                    "—" if performance is None else f"Classe {performance} / 12",
+                    "—" if performance is None else f"Classe {performance}",
                 )
                 st.caption(f"Identifiant de la maille : {selected_fid}")
                 chart_labels = [label for _, label in SPIDER_FIELDS]
