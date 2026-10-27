@@ -1,66 +1,70 @@
-"""Explorateur des indicateurs par maille du canton de Genève."""
-
 from __future__ import annotations
 
 from pathlib import Path
 
-import pyarrow.parquet as pq
 import plotly.graph_objects as go
+import pyarrow.parquet as pq
 import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parent
-PARQUET_PATH = ROOT / "data" / "GridXAll_Indic_FZ26_10_26.parquet"
+DATA_DIR = ROOT / "data"
 LOGO_PATH = ROOT / "assets" / "2022-6t_identite_Logotype Horizontal - Couleur.png"
-TILE_URL = "/app/static/tiles/{z}/{x}/{y}.pbf"
 MAP_CENTER = (46.20, 6.14)
-COMPONENT_KEY = "geneva-vector-tile-map"
-
-FIELDS = {
-    "Quali_Access_Grav": "Accessibilité Gravitaire",
-    "Quali_Proxim_CD": "Proximité de courtes distances",
-    "Quali_Ilot_Chal": "Ilots de chaleur",
-    "Quali_Bruit": "Nuisances sonores",
-    "Typo_SUM": "Performance globale",
+GEOJSON_URLS = {
+    "TOT": "/app/static/parcels_TOT.geojson.gz",
+    "PRIVE": "/app/static/parcels_PRIVE.geojson.gz",
 }
+
+LAYERS = {
+    "TOT": DATA_DIR / "Parcelles_classées_TOT.parquet",
+    "PRIVE": DATA_DIR / "Parcelles_classées_PRIVE.parquet",
+}
+FIELDS = {
+    "Quali_Access_Grav_majority": "Accessibilité Gravitaire",
+    "Quali_Proxim_CD_majority": "Proximité de courtes distances",
+    "Quali_Ilot_Chal_majority": "Ilots de chaleur",
+    "Quali_Bruit_majority": "Nuisances sonores",
+    "Typo_SUM_majority": "Performance globale",
+}
+DETAIL_FIELDS = ("commune", "no_parcelle", "surface")
 SPIDER_FIELDS = (
-    ("Quali_Access_Grav", "Accessibilité<br>gravitaire"),
-    ("Quali_Proxim_CD", "Proximité de<br>courtes distances"),
-    ("Quali_Ilot_Chal", "Ilots de<br>chaleur"),
-    ("Quali_Bruit", "Nuisances<br>sonores"),
+    ("Quali_Access_Grav_majority", "Accessibilité<br>gravitaire"),
+    ("Quali_Proxim_CD_majority", "Proximité de<br>courtes distances"),
+    ("Quali_Ilot_Chal_majority", "Ilots de<br>chaleur"),
+    ("Quali_Bruit_majority", "Nuisances<br>sonores"),
 )
 
-# Classes 0–9 progressent du rouge vers le jaune ; les classes 10–12 passent
-# à une gamme bleu-vert pour rendre la rupture entre les deux groupes évidente.
+# Les classes basses reprennent les accents corail, orange et or de 6t ; les
+# classes hautes passent aux tons aqua, turquoise et bleu marine de la marque.
 PALETTE = [
-    "#7f0000", "#b30000", "#d7301f", "#ef6548", "#fc8d59",
-    "#fdbb84", "#fdd49e", "#fee8c8", "#fff2a6", "#f4d03f",
-    "#29a3a3", "#167a8a", "#0b3c5d",
+    "#D95664", "#F06470", "#FF717C", "#FF8061", "#FF893F",
+    "#FF9433", "#F9A51C", "#F9B421", "#F8C14A", "#F5D58B",
+    "#7FD3CF", "#2A9C8E", "#060D53",
 ]
 
 st.set_page_config(page_title="Indicateurs territoriaux | Genève", layout="wide")
 
 
-@st.cache_resource(show_spinner="Préparation des indicateurs…")
+@st.cache_data(ttl="1h", max_entries=2)
 def load_properties(path: str, mtime: float) -> dict[int, dict]:
-    """Charge les attributs seulement ; les géométries sont servies en tuiles."""
-    del mtime  # La date de modification fait partie de la clé du cache.
+    """Charge les seuls attributs nécessaires au panneau de détail."""
+    del mtime
     available = set(pq.read_schema(path).names)
-    missing = set(FIELDS) - available
+    columns = ["fid", *FIELDS, *DETAIL_FIELDS]
+    missing = set(columns) - available
     if missing:
-        raise ValueError(f"Champs manquants dans le Parquet : {', '.join(sorted(missing))}")
-    columns_to_read = (["fid"] if "fid" in available else []) + list(FIELDS)
-    table = pq.read_table(path, columns=columns_to_read)
-    columns = table.select(list(FIELDS)).to_pydict()
-    ids = table.column("fid").to_pylist() if "fid" in available else range(1, table.num_rows + 1)
+        raise ValueError(f"Champs manquants dans le GeoParquet : {', '.join(sorted(missing))}")
+    table = pq.read_table(path, columns=columns)
+    values = table.to_pydict()
     return {
-        int(fid): {field: columns[field][i] for field in FIELDS}
-        for i, fid in enumerate(ids)
+        int(fid): {field: values[field][i] for field in (*FIELDS, *DETAIL_FIELDS)}
+        for i, fid in enumerate(values["fid"])
     }
 
 
-MAP_HTML = '<div id="leaflet-map" aria-label="Carte interactive des mailles du canton de Genève"></div>'
-MAP_CSS = "#leaflet-map { width: 100%; height: 720px; min-height: 500px; background: #eef1f3; }"
+MAP_HTML = '<div id="leaflet-map" aria-label="Carte interactive des parcelles du canton de Genève"></div>'
+MAP_CSS = "#leaflet-map { width: 100%; height: 720px; min-height: 500px; background: #EEECE1; }"
 MAP_JS = r"""
 let leafletAssetsPromise;
 const instances = new WeakMap();
@@ -95,41 +99,94 @@ function loadScript(url) {
 function loadLeafletAssets(styleRoot) {
   if (!leafletAssetsPromise) {
     loadStyle("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", styleRoot);
-    leafletAssetsPromise = loadScript("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js")
-      .then(() => loadScript("https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"));
+    leafletAssetsPromise = loadScript("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js");
   }
   return leafletAssetsPromise;
 }
 
 function classColor(value, colors) {
   const index = Number(value);
-  return Number.isInteger(index) && index >= 0 && index < colors.length ? colors[index] : "#9e9e9e";
+  return Number.isInteger(index) && index >= 0 && index < colors.length ? colors[index] : "#EEECE1";
 }
 
-function featureProperties(event) {
-  // VectorGrid exposes the hit feature through `layer` on some Leaflet
-  // versions and through `sourceTarget` on others.
-  const candidates = [event.layer, event.sourceTarget, event.propagatedFrom];
-  for (const candidate of candidates) {
-    const properties = candidate?.properties ?? candidate?.feature?.properties;
-    if (properties) return properties;
-  }
-  return {};
+function addClassLegend(map, palette) {
+  const legend = window.L.control({ position: "bottomright" });
+  legend.onAdd = () => {
+    const box = document.createElement("div");
+    box.setAttribute("aria-label", "Légende de la performance globale");
+    Object.assign(box.style, {
+      background: "rgba(255, 255, 255, 0.96)",
+      padding: "8px 10px",
+      borderRadius: "4px",
+      border: "1px solid #7FD3CF",
+      boxShadow: "0 1px 5px rgba(6, 13, 83, 0.28)",
+      maxHeight: "60vh",
+      overflowY: "auto",
+      fontSize: "12px",
+      lineHeight: "17px",
+    });
+    const title = document.createElement("div");
+    title.textContent = "Performance globale";
+    title.style.fontWeight = "600";
+    title.style.marginBottom = "4px";
+    box.appendChild(title);
+
+    palette.forEach((color, index) => {
+      const row = document.createElement("div");
+      Object.assign(row.style, { display: "flex", alignItems: "center", gap: "7px" });
+      const swatch = document.createElement("span");
+      Object.assign(swatch.style, {
+        display: "inline-block",
+        width: "16px",
+        height: "12px",
+        background: color,
+        border: "1px solid #060D53",
+        boxSizing: "border-box",
+      });
+      const label = document.createElement("span");
+      label.textContent = `Classe ${index}`;
+      row.append(swatch, label);
+      box.appendChild(row);
+    });
+    return box;
+  };
+  legend.addTo(map);
 }
 
-function highlightFeature(instance, fid) {
-  if (!instance.vectorLayer || fid == null) return;
-  if (instance.selectedFid != null && instance.selectedFid !== fid) {
-    instance.vectorLayer.resetFeatureStyle(instance.selectedFid);
-  }
-  instance.vectorLayer.setFeatureStyle(fid, {
-    color: "#ff00ff",
-    weight: 3,
+function styleFor(feature, data) {
+  const selected = Number(feature.properties.fid) === Number(data.selectedFid);
+  return {
+    color: selected ? "#6246D3" : "#060D53",
+    weight: selected ? 2.5 : 0.5,
     opacity: 1,
-    fillColor: "#ff00ff",
-    fillOpacity: 0.35,
-  });
-  instance.selectedFid = fid;
+    fillColor: selected ? "#6246D3" : classColor(feature.properties.Typo_SUM_majority, data.palette),
+    fillOpacity: selected ? 0.42 : 0.76,
+  };
+}
+
+async function installGeoJson(instance, data) {
+  const layerKey = data.layerKey;
+  instance.layerKey = layerKey;
+  const response = await fetch(data.geojsonUrl);
+  if (!response.ok) throw new Error(`GeoJSON indisponible (${response.status})`);
+  const compressed = await response.arrayBuffer();
+  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const geojson = await new Response(stream).json();
+  if (instance.layerKey !== layerKey) return;
+  if (instance.parcels) instance.map.removeLayer(instance.parcels);
+  instance.parcels = window.L.geoJSON(geojson, {
+    renderer: instance.renderer,
+    style: feature => styleFor(feature, data),
+    onEachFeature: (feature, layer) => layer.on("click", () => {
+      const fid = Number(feature.properties.fid);
+      if (!Number.isSafeInteger(fid)) return;
+      instance.selectedFid = fid;
+      instance.parcels.resetStyle();
+      layer.setStyle(styleFor(feature, { ...data, selectedFid: fid }));
+      instance.select(fid);
+    }),
+  }).addTo(instance.map);
+  instance.selectedFid = data.selectedFid;
 }
 
 export default function (component) {
@@ -139,208 +196,172 @@ export default function (component) {
 
   let instance = instances.get(parentElement);
   if (instance) {
-    instance.select = fid => setTriggerValue("maille_clicked", fid);
-    return () => {
-      instance.map?.remove();
-      instances.delete(parentElement);
-    };
+    instance.select = fid => setTriggerValue("parcel_clicked", fid);
+    if (instance.map && instance.layerKey !== data.layerKey) {
+      installGeoJson(instance, data).catch(error => console.error(error));
+    }
+    return () => { instance.map?.remove(); instances.delete(parentElement); };
   }
-  instance = { select: fid => setTriggerValue("maille_clicked", fid), selectedFid: null };
+  instance = { select: fid => setTriggerValue("parcel_clicked", fid), selectedFid: null };
   instances.set(parentElement, instance);
 
   loadLeafletAssets(parentElement.getRootNode()).then(() => {
     if (!container.isConnected || instance.map) return;
     const L = window.L;
-    const map = L.map(container, { preferCanvas: true, minZoom: 8, maxZoom: 18 })
+    const map = L.map(container, { preferCanvas: true, minZoom: 8, maxZoom: 19 })
       .setView(data.center, data.zoom);
     instance.map = map;
+    instance.renderer = L.canvas({ padding: 0.5 });
+    addClassLegend(map, data.palette);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
-
-    const vectorLayer = L.vectorGrid.protobuf(data.tileUrl, {
-      // SVG paths have native pointer hit-testing. The canvas tile renderer
-      // was drawing cells but frequently missing clicks on small polygons.
-      rendererFactory: L.svg.tile,
-      interactive: true,
-      bubblingMouseEvents: true,
-      getFeatureId: feature => feature.properties.fid,
-      vectorTileLayerStyles: {
-        hectares: properties => ({
-          color: "#45515b", weight: 0.25, fill: true,
-          fillColor: classColor(properties.Typo_SUM, data.palette), fillOpacity: 0.72,
-        }),
-      },
-    }).addTo(map);
-    instance.vectorLayer = vectorLayer;
-    if (data.selectedFid != null) highlightFeature(instance, Number(data.selectedFid));
-    vectorLayer.on("click", event => {
-      const properties = featureProperties(event);
-      const fid = Number(properties.fid);
-      if (!Number.isSafeInteger(fid)) {
-        console.warn("Clic VectorGrid reçu sans fid exploitable", event, properties);
-        return;
-      }
-      highlightFeature(instance, fid);
-      instance.select(fid);
+    installGeoJson(instance, data).catch(error => {
+      container.textContent = "Impossible de charger les parcelles. Vérifiez les fichiers GeoJSON dans static/.";
+      console.error(error);
     });
   }).catch(error => {
     container.textContent = "Impossible de charger Leaflet. Vérifiez l’accès à unpkg.com.";
     console.error(error);
   });
-  return () => {
-    instance.map?.remove();
-    instances.delete(parentElement);
-  };
+  return () => { instance.map?.remove(); instances.delete(parentElement); };
 }
 """
 LEAFLET_MAP = st.components.v2.component(
-    "geneva_vector_tile_map", html=MAP_HTML, css=MAP_CSS, js=MAP_JS
+    "geneva_parcel_map", html=MAP_HTML, css=MAP_CSS, js=MAP_JS
 )
 
 
-if not PARQUET_PATH.exists():
-    st.error(
-        "Fichier GeoParquet introuvable. Générez-le avec "
-        "`python data/convert_gpkg_to_parquet.py`."
-    )
-    st.stop()
-
-try:
-    properties_by_id = load_properties(
-        str(PARQUET_PATH), PARQUET_PATH.stat().st_mtime
-    )
-except Exception as exc:
-    st.error(f"Impossible de lire les attributs du GeoParquet : {exc}")
-    st.stop()
-
-if not (ROOT / "static" / "tiles").is_dir():
-    st.error(
-        "Tuiles vectorielles introuvables. Générez-les avec "
-        "`python data/build_vector_tiles.py`."
-    )
+missing_parquets = [path for path in LAYERS.values() if not path.is_file()]
+missing_geojson = [path for path in GEOJSON_URLS if not (ROOT / "static" / f"parcels_{path}.geojson.gz").is_file()]
+if missing_parquets or missing_geojson:
+    missing = [path.name for path in missing_parquets]
+    missing.extend(f"parcels_{layer}.geojson.gz" for layer in missing_geojson)
+    names = ", ".join(missing)
+    st.error(f"Fichiers cartographiques introuvables : {names}. Consultez les commandes de préparation dans README.md.")
     st.stop()
 
 st.title("Waechter Immobilier - Aide à la décision")
 
 @st.fragment
 def render_dashboard() -> None:
-    """Isole le rendu interactif : un clic ne rejoue pas toute la page."""
-    left, main, right = st.columns([1.15, 5.5, 2.0], gap="medium")
+    left, main, right = st.columns([1.35, 5.2, 2.0], gap="medium")
 
     with left:
-        # st.markdown("## Waechter Immobilier")
-        # st.markdown("### Aide à la décision")
-        # st.markdown("---")
         st.image(LOGO_PATH, width=240, alt="Logo 6t")
         st.markdown(
-            "Cette carte présente les indicateurs territoriaux sur des mailles de 25 mètres par 25 mètres."
-            "Cliquez sur une maille pour consulter ses résultats ; zoomez "
-            "pour voir davantage de mailles."
+            "Cette carte identifie les secteurs présentant de forts potentiels " \
+            "d'attractivité pour un opération immobilière sur le Canton de Genève sur la base"
+            " d'une analyse multicritère. " )
+        st.markdown(
+            "Une parcelle a un fort potentiel lorsqu'elle présente simultanément 4 qualités " \
+            "importantes: " )
+        st.markdown(
+            "1)	Une excellente proximité des équipements, commerces et services du quotidien" )
+        st.markdown(
+            "2)	Une bonne accessibilité en transports public " )
+        st.markdown(
+            "3)	Une faible exposition au bruit routier de jour " )
+        st.markdown(
+            "4)	Une localisation en dehors des îlots de chaleur urbains" )
+        st.markdown(
+            "La carte exclu les parcelles appartenant au domaine public. Les parcelles les " \
+            " plus attractives sont colorées en bleu."
         )
-        st.markdown("---")
-
-        st.markdown("\n")
-        st.markdown("**Performance globale**")
-        for i in range(13):
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:8px;margin:2px 0">'
-                f'<span style="display:inline-block;width:16px;height:12px;'
-                f'background:{PALETTE[i]};border:1px solid #777"></span>'
-                f'<span style="font-size:0.85rem">Classe {i}</span></div>',
-                unsafe_allow_html=True,
-            )
-
     with main:
         st.subheader("Carte des indicateurs")
+        selected_layer = st.segmented_control(
+            "Type de propriété", ["TOT", "PRIVE"], default="TOT", key="parcel_layer"
+        )
+        if selected_layer is None:
+            selected_layer = "TOT"
+        if st.session_state.get("_previous_parcel_layer", "TOT") != selected_layer:
+            st.session_state.pop("selected_parcel_fid", None)
+            st.session_state["_previous_parcel_layer"] = selected_layer
+
+        parquet_path = LAYERS[selected_layer]
+        try:
+            properties_by_id = load_properties(str(parquet_path), parquet_path.stat().st_mtime)
+        except Exception as exc:
+            st.error(f"Impossible de préparer les données de la couche {selected_layer} : {exc}")
+            return
+
         map_result = LEAFLET_MAP(
-            key="geneva-vector-tile-map",
+            key="geneva-parcel-map",
             data={
-                "tileUrl": TILE_URL,
+                "geojsonUrl": GEOJSON_URLS[selected_layer],
+                "layerKey": selected_layer,
                 "center": MAP_CENTER,
                 "palette": PALETTE,
-                "selectedFid": st.session_state.get("selected_cell_fid"),
-                # Low zoom tiles omit many features to stay small. Start where
-                # the vector tiles contain enough individual cells to select.
+                "selectedFid": st.session_state.get("selected_parcel_fid"),
                 "zoom": 14,
             },
-            on_maille_clicked_change=lambda: None,
+            on_parcel_clicked_change=lambda: None,
         )
-
-        # Trigger values are returned on ComponentResult; they are not stored
-        # in the component's persistent Session State entry.
-        clicked_fid = getattr(map_result, "maille_clicked", None)
+        clicked_fid = getattr(map_result, "parcel_clicked", None)
         if clicked_fid is not None:
             try:
-                st.session_state["selected_cell_fid"] = int(clicked_fid)
+                st.session_state["selected_parcel_fid"] = int(clicked_fid)
             except (TypeError, ValueError):
-                st.session_state.pop("selected_cell_fid", None)
+                st.session_state.pop("selected_parcel_fid", None)
 
     with right:
-        st.subheader("Détail de la maille")
-        selected_fid = st.session_state.get("selected_cell_fid")
-        if selected_fid is not None:
-            try:
-                selected_fid = int(selected_fid)
-            except (TypeError, ValueError):
-                selected_fid = None
-        if selected_fid is None:
-            st.info("Cliquez sur une maille pour analyser sa performance.")
+        st.subheader("Détail de la parcelle")
+        selected_fid = st.session_state.get("selected_parcel_fid")
+        selected = properties_by_id.get(int(selected_fid)) if selected_fid is not None else None
+        if selected is None:
+            st.info("Cliquez sur une parcelle pour lire son analyse multicritère.")
         else:
-            selected = properties_by_id.get(selected_fid)
-            if selected is None:
-                st.warning("Les informations de cette maille ne sont pas disponibles.")
-            else:
-                performance = selected.get("Typo_SUM")
-                st.metric(
-                    "Performance globale",
-                    "—" if performance is None else f"Classe {performance}",
-                )
-                st.caption(f"Identifiant de la maille : {selected_fid}")
-                chart_labels = [label for _, label in SPIDER_FIELDS]
-                chart_values = [selected.get(field) for field, _ in SPIDER_FIELDS]
-                radar = go.Figure(
-                    go.Scatterpolar(
-                        r=chart_values + chart_values[:1],
-                        theta=chart_labels + chart_labels[:1],
-                        mode="lines+markers",
-                        fill="toself",
-                        fillcolor="rgba(41, 163, 163, 0.22)",
-                        line={"color": "#167a8a", "width": 2},
-                        marker={"size": 6, "color": "#167a8a"},
-                        hovertemplate="%{theta}<br>Classe : %{r} / 3<extra></extra>",
-                    )
-                )
-                radar.update_layout(
-                    height=340,
-                    margin={"l": 30, "r": 50, "t": 30, "b": 32},
-                    showlegend=False,
-                    dragmode=False,
-                    hovermode="closest",
-                    polar={
-                        "radialaxis": {
-                            "range": [0, 3],
-                            "tickmode": "array",
-                            "tickvals": [0, 1, 2, 3],
-                            "tickfont": {"size": 10},
-                        },
-                        "angularaxis": {"tickfont": {"size": 10}},
-                    },
-                )
-                st.plotly_chart(
-                    radar,
-                    width="stretch",
-                    config={
-                        "displayModeBar": False,
-                        "scrollZoom": False,
-                        "doubleClick": False,
-                    },
-                    alt="Distribution des quatre indicateurs, sur une échelle de 0 à 3",
-                    key=f"indicators-radar-{selected_fid}",
-                )
+            performance = selected.get("Typo_SUM_majority")
+            st.metric(
+                "Performance globale",
+                "—" if performance is None else f"Classe {int(performance)}",
+            )
+            st.caption(f"Commune : {selected.get('commune') or '—'}")
+            st.caption(f"N° de parcelle : {selected.get('no_parcelle') or '—'}")
+            surface = selected.get("surface")
+            st.caption(f"Surface : {surface:,.0f} m²".replace(",", "'") if surface is not None else "Surface : —")
 
-    st.caption("Source : GeoParquet · tuiles vectorielles locales · projection EPSG:2056")
+            chart_labels = [label for _, label in SPIDER_FIELDS]
+            chart_values = [selected.get(field) for field, _ in SPIDER_FIELDS]
+            radar = go.Figure(
+                go.Scatterpolar(
+                    r=chart_values + chart_values[:1],
+                    theta=chart_labels + chart_labels[:1],
+                    mode="lines+markers",
+                    fill="toself",
+                    fillcolor="rgba(42, 156, 142, 0.22)",
+                    line={"color": "#2A9C8E", "width": 2},
+                    marker={"size": 6, "color": "#2A9C8E"},
+                    hovertemplate="%{theta}<br>Classe : %{r} / 3<extra></extra>",
+                )
+            )
+            radar.update_layout(
+                height=340,
+                margin={"l": 30, "r": 50, "t": 30, "b": 32},
+                showlegend=False,
+                dragmode=False,
+                hovermode="closest",
+                polar={
+                    "radialaxis": {
+                        "range": [0, 3],
+                        "tickmode": "array",
+                        "tickvals": [0, 1, 2, 3],
+                        "tickfont": {"size": 10},
+                    },
+                    "angularaxis": {"tickfont": {"size": 10}},
+                },
+            )
+            st.plotly_chart(
+                radar,
+                width="stretch",
+                config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False},
+                alt="Distribution des quatre indicateurs, sur une échelle de 0 à 3",
+                key=f"parcel-indicators-radar-{selected_fid}",
+            )
+
+    st.caption("Parcelles cadastrales selon le Code Civil Suisse · SITG · OpenStreetMap · EPSG:2056")
 
 
 render_dashboard()

@@ -1,2 +1,12 @@
+[theme]
+base = "light"
+primaryColor = "#6246D3"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EEECE1"
+textColor = "#060D53"
+linkColor = "#6246D3"
+borderColor = "#7FD3CF"
+chartCategoricalColors = ["#060D53", "#6246D3", "#FF717C", "#FF9433", "#F9B421", "#2A9C8E", "#7FD3CF", "#954F72"]
+
 [server]
 enableStaticServing = true
