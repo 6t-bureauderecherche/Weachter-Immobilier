@@ -14,3 +14,7 @@ venv/
 # Fichiers temporaires et journaux
 *.log
 *.tmp
+
+# Sources cadastrales trop volumineuses pour GitHub
+/data/Parcelles_classées_PRIVE.gpkg
+/data/Parcelles_classées_TOT.gpkg
