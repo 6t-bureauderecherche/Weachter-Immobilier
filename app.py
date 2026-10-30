@@ -169,9 +169,16 @@ async function installGeoJson(instance, data) {
   instance.layerKey = layerKey;
   const response = await fetch(data.geojsonUrl);
   if (!response.ok) throw new Error(`GeoJSON indisponible (${response.status})`);
-  const compressed = await response.arrayBuffer();
-  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const geojson = await new Response(stream).json();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  // Certains serveurs/proxys décompressent le .gz avant de le transmettre.
+  // Dans ce cas, ne pas appliquer une deuxième décompression gzip.
+  const isGzip = bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const payload = isGzip
+    ? await new Response(
+        new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
+      ).arrayBuffer()
+    : bytes.buffer;
+  const geojson = JSON.parse(new TextDecoder().decode(payload));
   if (instance.layerKey !== layerKey) return;
   if (instance.parcels) instance.map.removeLayer(instance.parcels);
   instance.parcels = window.L.geoJSON(geojson, {
