@@ -307,7 +307,7 @@ def render_dashboard() -> None:
                 st.session_state.pop("selected_parcel_fid", None)
 
     with right:
-        st.subheader("Détail de la parcelle")
+        st.subheader("Analyse multicritère")
         selected_fid = st.session_state.get("selected_parcel_fid")
         selected = properties_by_id.get(int(selected_fid)) if selected_fid is not None else None
         if selected is None:
@@ -315,7 +315,7 @@ def render_dashboard() -> None:
         else:
             performance = selected.get("Typo_SUM_majority")
             st.metric(
-                "Performance globale",
+                "Score de potentiel d'attractivité",
                 "—" if performance is None else f"Classe {int(performance)}",
             )
             st.caption(f"Commune : {selected.get('commune') or '—'}")
