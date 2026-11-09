@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
+import geopandas as gpd
 import plotly.graph_objects as go
 import pyarrow.parquet as pq
 import streamlit as st
@@ -11,11 +13,6 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 LOGO_PATH = ROOT / "assets" / "2022-6t_identite_Logotype Horizontal - Couleur.png"
 MAP_CENTER = (46.20, 6.14)
-GEOJSON_URLS = {
-    "TOT": "/app/static/parcels_TOT.geojson.gz",
-    "PRIVE": "/app/static/parcels_PRIVE.geojson.gz",
-}
-
 LAYERS = {
     "TOT": DATA_DIR / "Parcelles_classées_TOT.parquet",
     "PRIVE": DATA_DIR / "Parcelles_classées_PRIVE.parquet",
@@ -61,6 +58,17 @@ def load_properties(path: str, mtime: float) -> dict[int, dict]:
         int(fid): {field: values[field][i] for field in (*FIELDS, *DETAIL_FIELDS)}
         for i, fid in enumerate(values["fid"])
     }
+
+
+@st.cache_data(ttl="1h", max_entries=2)
+def load_map_geojson(path: str, mtime: float) -> dict:
+    """Lit les géométries du GeoParquet et prépare les données de la carte."""
+    del mtime
+    frame = gpd.read_parquet(path, columns=["fid", "Typo_SUM_majority", "geometry"])
+    frame.geometry = frame.geometry.simplify(0.25, preserve_topology=True)
+    frame = frame.to_crs("EPSG:4326")
+    frame["fid"] = frame["fid"].astype("int64")
+    return json.loads(frame.to_json(drop_id=True))
 
 
 MAP_HTML = '<div id="leaflet-map" aria-label="Carte interactive des parcelles du canton de Genève"></div>'
@@ -167,18 +175,8 @@ function styleFor(feature, data) {
 async function installGeoJson(instance, data) {
   const layerKey = data.layerKey;
   instance.layerKey = layerKey;
-  const response = await fetch(data.geojsonUrl);
-  if (!response.ok) throw new Error(`GeoJSON indisponible (${response.status})`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  // Certains serveurs/proxys décompressent le .gz avant de le transmettre.
-  // Dans ce cas, ne pas appliquer une deuxième décompression gzip.
-  const isGzip = bytes[0] === 0x1f && bytes[1] === 0x8b;
-  const payload = isGzip
-    ? await new Response(
-        new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
-      ).arrayBuffer()
-    : bytes.buffer;
-  const geojson = JSON.parse(new TextDecoder().decode(payload));
+  const geojson = data.geojson;
+  if (!geojson || !Array.isArray(geojson.features)) throw new Error("Géométries GeoParquet indisponibles");
   if (instance.layerKey !== layerKey) return;
   if (instance.parcels) instance.map.removeLayer(instance.parcels);
   instance.parcels = window.L.geoJSON(geojson, {
@@ -225,7 +223,7 @@ export default function (component) {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
     installGeoJson(instance, data).catch(error => {
-      container.textContent = "Impossible de charger les parcelles. Vérifiez les fichiers GeoJSON dans static/.";
+      container.textContent = "Impossible de charger les parcelles depuis le GeoParquet.";
       console.error(error);
     });
   }).catch(error => {
@@ -241,12 +239,10 @@ LEAFLET_MAP = st.components.v2.component(
 
 
 missing_parquets = [path for path in LAYERS.values() if not path.is_file()]
-missing_geojson = [path for path in GEOJSON_URLS if not (ROOT / "static" / f"parcels_{path}.geojson.gz").is_file()]
-if missing_parquets or missing_geojson:
+if missing_parquets:
     missing = [path.name for path in missing_parquets]
-    missing.extend(f"parcels_{layer}.geojson.gz" for layer in missing_geojson)
     names = ", ".join(missing)
-    st.error(f"Fichiers cartographiques introuvables : {names}. Consultez les commandes de préparation dans README.md.")
+    st.error(f"GeoParquet introuvables : {names}. Consultez les commandes de préparation dans README.md.")
     st.stop()
 
 st.title("Waechter Immobilier - Aide à la décision")
@@ -290,6 +286,7 @@ def render_dashboard() -> None:
         parquet_path = LAYERS[selected_layer]
         try:
             properties_by_id = load_properties(str(parquet_path), parquet_path.stat().st_mtime)
+            map_geojson = load_map_geojson(str(parquet_path), parquet_path.stat().st_mtime)
         except Exception as exc:
             st.error(f"Impossible de préparer les données de la couche {selected_layer} : {exc}")
             return
@@ -297,7 +294,7 @@ def render_dashboard() -> None:
         map_result = LEAFLET_MAP(
             key="geneva-parcel-map",
             data={
-                "geojsonUrl": GEOJSON_URLS[selected_layer],
+                "geojson": map_geojson,
                 "layerKey": selected_layer,
                 "center": MAP_CENTER,
                 "palette": PALETTE,

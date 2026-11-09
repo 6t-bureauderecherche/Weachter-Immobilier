@@ -25,7 +25,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Leaflet et les tuiles du fond OpenStreetMap sont chargés depuis Internet. Les GeoJSON compressés de la carte sont générés dans `static/` avec une simplification légère des géométries ; le GeoParquet conserve les données attributaires complètes.
+Leaflet et les tuiles du fond OpenStreetMap sont chargés depuis Internet. La carte lit les géométries directement dans le GeoParquet côté serveur, les simplifie légèrement, puis les transmet au composant Leaflet. Les GeoJSON compressés historiques dans `static/` ne sont plus nécessaires à l’application.
 
 ## Ancienne version
 
