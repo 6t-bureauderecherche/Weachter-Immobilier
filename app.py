@@ -28,8 +28,8 @@ DETAIL_FIELDS = ("commune", "no_parcelle", "surface")
 SPIDER_FIELDS = (
     ("Quali_Access_Grav_majority", "Accessibilité<br>gravitaire"),
     ("Quali_Proxim_CD_majority", "Proximité de<br>courtes distances"),
-    ("Quali_Ilot_Chal_majority", "Ilots de<br>chaleur"),
-    ("Quali_Bruit_majority", "Nuisances<br>sonores"),
+    ("Quali_Ilot_Chal_majority", "Fraîcheur<br>urbaine"),
+    ("Quali_Bruit_majority", "Calme<br>sonore"),
 )
 
 # Les classes basses reprennent les accents corail, orange et or de 6t ; les
@@ -326,52 +326,110 @@ def render_dashboard() -> None:
         if selected is None:
             st.info("Cliquez sur une parcelle pour lire son analyse multicritère.")
         else:
+            chart_type = st.session_state.get("parcel_chart_type", "Radar")
             performance = selected.get("Typo_SUM_majority")
-            st.metric(
-                "Score de potentiel d'attractivité",
-                "—" if performance is None else f"Classe {int(performance)}",
-            )
             st.caption(f"Commune : {selected.get('commune') or '—'}")
             st.caption(f"N° de parcelle : {selected.get('no_parcelle') or '—'}")
             surface = selected.get("surface")
             st.caption(f"Surface : {surface:,.0f} m²".replace(",", "'") if surface is not None else "Surface : —")
+            score_label = "—" if performance is None else f"Classe {int(performance)}"
+            st.markdown(
+                "Score de potentiel d'attractivité : "
+                f"<span style='color: #2A9C8E; font-size: 1rem; font-weight: 600'>{score_label}</span>",
+                unsafe_allow_html=True,
+            )
 
             chart_labels = [label for _, label in SPIDER_FIELDS]
             chart_values = [selected.get(field) for field, _ in SPIDER_FIELDS]
-            radar = go.Figure(
-                go.Scatterpolar(
-                    r=chart_values + chart_values[:1],
-                    theta=chart_labels + chart_labels[:1],
-                    mode="lines+markers",
-                    fill="toself",
-                    fillcolor="rgba(42, 156, 142, 0.22)",
-                    line={"color": "#2A9C8E", "width": 2},
-                    marker={"size": 6, "color": "#2A9C8E"},
-                    hovertemplate="%{theta}<br>Classe : %{r} / 3<extra></extra>",
+            if chart_type == "Barres":
+                chart = go.Figure(
+                    go.Bar(
+                        x=chart_labels,
+                        y=chart_values,
+                        marker_color="#2A9C8E",
+                        hovertemplate="%{x}<br>Classe : %{y} / 3<extra></extra>",
+                    )
                 )
-            )
-            radar.update_layout(
-                height=340,
-                margin={"l": 30, "r": 50, "t": 30, "b": 32},
-                showlegend=False,
-                dragmode=False,
-                hovermode="closest",
-                polar={
-                    "radialaxis": {
-                        "range": [0, 3],
-                        "tickmode": "array",
-                        "tickvals": [0, 1, 2, 3],
-                        "tickfont": {"size": 10},
+                chart.add_shape(
+                    type="line",
+                    x0=0,
+                    x1=1,
+                    y0=3,
+                    y1=3,
+                    xref="paper",
+                    yref="y",
+                    line={"color": "#060D53", "width": 1, "dash": "dash"},
+                )
+                chart.add_annotation(
+                    x=1,
+                    y=3,
+                    xref="paper",
+                    yref="y",
+                    text="Optimum",
+                    showarrow=False,
+                    xanchor="right",
+                    yanchor="bottom",
+                    font={"size": 10, "color": "#060D53"},
+                )
+                chart.update_yaxes(
+                    range=[0, 3.3],
+                    tickmode="array",
+                    tickvals=[0, 1, 2, 3],
+                    title="Classe",
+                    showgrid=True,
+                    gridcolor="rgba(6, 13, 83, 0.12)",
+                    gridwidth=0.5,
+                    fixedrange=True,
+                )
+                chart.update_xaxes(tickangle=-45, tickfont={"size": 10}, fixedrange=True)
+                chart.update_layout(
+                    height=340,
+                    margin={"l": 30, "r": 8, "t": 30, "b": 95},
+                    showlegend=False,
+                    dragmode=False,
+                    hovermode="closest",
+                )
+            else:
+                chart = go.Figure(
+                    go.Scatterpolar(
+                        r=chart_values + chart_values[:1],
+                        theta=chart_labels + chart_labels[:1],
+                        mode="lines+markers",
+                        fill="toself",
+                        fillcolor="rgba(42, 156, 142, 0.22)",
+                        line={"color": "#2A9C8E", "width": 2},
+                        marker={"size": 6, "color": "#2A9C8E"},
+                        hovertemplate="%{theta}<br>Classe : %{r} / 3<extra></extra>",
+                    )
+                )
+                chart.update_layout(
+                    height=340,
+                    margin={"l": 30, "r": 50, "t": 30, "b": 32},
+                    showlegend=False,
+                    dragmode=False,
+                    hovermode="closest",
+                    polar={
+                        "radialaxis": {
+                            "range": [0, 3],
+                            "tickmode": "array",
+                            "tickvals": [0, 1, 2, 3],
+                            "tickfont": {"size": 10},
+                        },
+                        "angularaxis": {"tickfont": {"size": 10}},
                     },
-                    "angularaxis": {"tickfont": {"size": 10}},
-                },
-            )
+                )
             st.plotly_chart(
-                radar,
+                chart,
                 width="stretch",
                 config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False},
-                alt="Distribution des quatre indicateurs, sur une échelle de 0 à 3",
-                key=f"parcel-indicators-radar-{selected_fid}",
+                alt=f"Distribution des quatre indicateurs sous forme de {chart_type.lower()}, sur une échelle de 0 à 3",
+                key=f"parcel-indicators-{chart_type.lower()}-{selected_fid}",
+            )
+            st.segmented_control(
+                "Type de graphique",
+                ["Radar", "Barres"],
+                default="Radar",
+                key="parcel_chart_type",
             )
 
     st.caption("Parcelles cadastrales selon le Code Civil Suisse · SITG · OpenStreetMap · EPSG:2056")
