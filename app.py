@@ -173,10 +173,10 @@ function styleFor(feature, data) {
 }
 
 async function installGeoJson(instance, data) {
+  if (!data.geojson || !Array.isArray(data.geojson.features)) return;
   const layerKey = data.layerKey;
   instance.layerKey = layerKey;
   const geojson = data.geojson;
-  if (!geojson || !Array.isArray(geojson.features)) throw new Error("Géométries GeoParquet indisponibles");
   if (instance.layerKey !== layerKey) return;
   if (instance.parcels) instance.map.removeLayer(instance.parcels);
   instance.parcels = window.L.geoJSON(geojson, {
@@ -202,7 +202,7 @@ export default function (component) {
   let instance = instances.get(parentElement);
   if (instance) {
     instance.select = fid => setTriggerValue("parcel_clicked", fid);
-    if (instance.map && instance.layerKey !== data.layerKey) {
+    if (instance.map && instance.layerKey !== data.layerKey && data.geojson) {
       installGeoJson(instance, data).catch(error => console.error(error));
     }
     return () => { instance.map?.remove(); instances.delete(parentElement); };
@@ -284,9 +284,16 @@ def render_dashboard() -> None:
             st.session_state["_previous_parcel_layer"] = selected_layer
 
         parquet_path = LAYERS[selected_layer]
+        send_map_geojson = (
+            st.session_state.get("_map_geojson_sent_layer") != selected_layer
+        )
         try:
             properties_by_id = load_properties(str(parquet_path), parquet_path.stat().st_mtime)
-            map_geojson = load_map_geojson(str(parquet_path), parquet_path.stat().st_mtime)
+            map_geojson = (
+                load_map_geojson(str(parquet_path), parquet_path.stat().st_mtime)
+                if send_map_geojson
+                else None
+            )
         except Exception as exc:
             st.error(f"Impossible de préparer les données de la couche {selected_layer} : {exc}")
             return
@@ -303,6 +310,8 @@ def render_dashboard() -> None:
             },
             on_parcel_clicked_change=lambda: None,
         )
+        if send_map_geojson:
+            st.session_state["_map_geojson_sent_layer"] = selected_layer
         clicked_fid = getattr(map_result, "parcel_clicked", None)
         if clicked_fid is not None:
             try:
